@@ -55,6 +55,7 @@ const errorTitles: Record<string, string> = {
   BRIGHTDATA_SNAPSHOT_FAILED: "Bright Data collection failed",
   BRIGHTDATA_SNAPSHOT_PENDING: "Bright Data is still collecting reviews",
   BRIGHTDATA_NO_REVIEW_TEXT: "Bright Data returned no review text",
+  PDF_EXPORT_FAILED: "Could not export PDF",
 };
 
 export default function Home() {
@@ -76,6 +77,7 @@ export default function Home() {
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [pdfMode, setPdfMode] = useState<"reviews" | "report" | "both">("both");
   const instructionRef = useRef<HTMLInputElement>(null);
   const reviewFileRef = useRef<HTMLInputElement>(null);
 
@@ -148,6 +150,36 @@ export default function Home() {
     } catch (e) { setError({ code: "EXPORT_FAILED", message: e instanceof Error ? e.message : "Export failed." }); }
   }
 
+  async function downloadPDF() {
+    if (!result) return;
+    try {
+      const response = await fetch(`${API}/api/export/pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: pdfMode,
+          reviews: pdfMode === "report" ? [] : filteredReviews,
+          asin: result.asin,
+          product_url: result.product_url,
+          source_mode: result.source_mode,
+          review_count_collected: result.review_count_collected,
+          analysis: result.analysis,
+          notice: result.notice,
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const detail = data?.detail;
+        throw new Error(typeof detail === "string" ? detail : "PDF export failed. Please try again.");
+      }
+      const blob = await response.blob();
+      const filename = pdfMode === "reviews" ? "product-reviews.pdf" : pdfMode === "report" ? "product-review-analysis.pdf" : "product-review-report-and-reviews.pdf";
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = objectUrl; a.download = filename; a.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (e) { setError({ code: "PDF_EXPORT_FAILED", message: e instanceof Error ? e.message : "PDF export failed." }); }
+  }
+
   function downloadReport() {
     if (!result) return;
     const content = `PRODUCT REVIEW INTELLIGENCE REPORT\nProduct URL: ${result.product_url}\nASIN: ${result.asin}\nCollected reviews: ${result.review_count_collected}\nCurrently filtered reviews: ${filteredReviews.length}\nSource: ${result.source_mode}\n\n${result.analysis}\n\nLimitations: ${result.notice}\n`;
@@ -196,7 +228,7 @@ export default function Home() {
         </form>
 
         {result && <section className="results">
-          <div className="results-head"><div><div className="eyebrow">ANALYSIS COMPLETE</div><h2>Review intelligence report</h2><p>{result.review_count_collected} reviews collected · ASIN {result.asin} · {result.source_mode.replaceAll("_", " ")}</p></div><div className="export-group"><button className="export" onClick={downloadReport}><Download size={15}/> Report</button><button className="export" onClick={()=>downloadDataset("csv")}><FileSpreadsheet size={15}/> CSV</button><button className="export" onClick={()=>downloadDataset("xlsx")}><FileSpreadsheet size={15}/> XLSX</button></div></div>
+          <div className="results-head"><div><div className="eyebrow">ANALYSIS COMPLETE</div><h2>Review intelligence report</h2><p>{result.review_count_collected} reviews collected · ASIN {result.asin} · {result.source_mode.replaceAll("_", " ")}</p></div><div className="export-group"><button className="export" onClick={downloadReport}><Download size={15}/> Report TXT</button><select className="export-select" aria-label="PDF content to export" value={pdfMode} onChange={e=>setPdfMode(e.target.value as "reviews" | "report" | "both")}><option value="reviews">Reviews table PDF</option><option value="report">Analysis report PDF</option><option value="both">Report + reviews PDF</option></select><button className="export" onClick={downloadPDF}><Download size={15}/> PDF</button><button className="export" onClick={()=>downloadDataset("csv")}><FileSpreadsheet size={15}/> CSV</button><button className="export" onClick={()=>downloadDataset("xlsx")}><FileSpreadsheet size={15}/> XLSX</button></div></div>
           <div className="metric-row"><div className="metric"><span>Reviews collected</span><b>{result.review_count_collected}</b><small>Requested up to {result.requested_review_count}</small></div><div className="metric"><span>Positive / neutral / negative</span><b className="sentiment-metric">{sentimentCounts.positive || 0} / {sentimentCounts.neutral || 0} / {sentimentCounts.negative || 0}</b><small>AI classification of collected reviews</small></div><div className="metric"><span>Filtered results</span><b>{filteredReviews.length}</b><small>Ready to export</small></div></div>
           <article className="report"><div className="report-title"><Sparkles size={17}/><b>AI findings</b></div><pre>{result.analysis}</pre><div className="evidence-note">{result.notice}</div></article>
           <section className="review-section">

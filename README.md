@@ -11,6 +11,7 @@ A prototype for collecting accessible Amazon product reviews from a product page
 - Uses Groq to classify individual reviews by sentiment, aspects, pros, and cons, then creates an overall evidence-based report.
 - Supports collection-time star selection (for example, collect only 4-star reviews) and combined post-analysis filters: stars, sentiment, pros/cons, aspect, keyword, verified purchase, and date range.
 - Exports the currently filtered reviews to CSV or XLSX, and downloads the report as text.
+- Exports a PDF of the currently filtered review table, the analysis report, or both in one file.
 - Accepts optional PDF, DOCX, XLSX, CSV, TXT, Markdown, or JSON task instructions/templates.
 
 If Amazon requires sign-in and automated collection stops, upload a CSV or XLSX of review data you are authorized to use. Include a review text column named `review_text`, `review`, `body`, `content`, or `text`; optional columns include title, rating, date, verified purchase, variant, and review ID. The upload is limited by `MAX_UPLOAD_MB` and `MAX_REVIEWS`. This avoids additional review-provider charges, though AI analysis still uses the configured Groq API.
@@ -97,6 +98,7 @@ No additional credentials are needed for the public-page fallback. If managed pr
 - `POST /api/analyze` — form fields `url` (unless `review_file` is supplied), optional CSV/XLSX `review_file`, `prompt`, `max_reviews`, optional comma-separated `star_ratings` (for example `4` or `3,4,5`), and optional repeated `instructions` files. Collects or imports matching reviews and analyzes them.
 - `POST /api/export/csv` — JSON body `{ "reviews": [...] }`, returns a CSV attachment.
 - `POST /api/export/xlsx` — JSON body `{ "reviews": [...] }`, returns an XLSX attachment.
+- `POST /api/export/pdf` — JSON body with `mode` (`reviews`, `report`, or `both`), review rows and report metadata; returns a formatted PDF attachment.
 
 ## Known prototype limitations
 - No login, tenant isolation, database persistence, background job queue, or per-user task history.

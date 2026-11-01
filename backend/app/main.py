@@ -10,7 +10,7 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -1218,6 +1218,129 @@ class ExportRequest(BaseModel):
     reviews: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class PDFExportRequest(BaseModel):
+    mode: Literal["reviews", "report", "both"] = "both"
+    reviews: list[dict[str, Any]] = Field(default_factory=list)
+    asin: str = ""
+    product_url: str = ""
+    source_mode: str = ""
+    review_count_collected: int = 0
+    analysis: str = Field(default="", max_length=100000)
+    notice: str = ""
+
+
+def build_review_table_pdf(payload: PDFExportRequest) -> bytes:
+    from html import escape
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
+
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle("ReviewCell", parent=styles["BodyText"], fontSize=7.5, leading=9.5, spaceAfter=0)
+    header_style = ParagraphStyle("ReviewHeader", parent=cell_style, textColor=colors.white, fontName="Helvetica-Bold")
+    title_style = ParagraphStyle("ReviewTitle", parent=styles["Title"], fontSize=18, leading=22, alignment=0)
+
+    def clean(value: Any) -> str:
+        text = str(value if value is not None else "")
+        # The built-in PDF fonts use WinAnsi; replace unsupported glyphs rather than failing export.
+        return text.encode("cp1252", "replace").decode("cp1252")
+
+    def para(value: Any, style=cell_style) -> Paragraph:
+        return Paragraph(escape(clean(value)).replace("\n", "<br/>"), style)
+
+    rows: list[list[Any]] = [[para(label, header_style) for label in ("Rating", "Review", "Sentiment", "Aspects", "Pros / cons", "Date")]]
+    for review in payload.reviews[:MAX_REVIEWS]:
+        title = str(review.get("review_title") or "Customer review")
+        text = str(review.get("review_text") or "")
+        verified = review.get("verified_purchase")
+        if verified is True or str(verified).lower() == "true" or "verified" in str(verified).lower():
+            text += "\nVerified purchase"
+        review_markup = f"<b>{escape(clean(title))}</b><br/>{escape(clean(text)).replace(chr(10), '<br/>')}"
+        rows.append([
+            para(review.get("rating") or "N/A"),
+            Paragraph(review_markup, cell_style),
+            para(review.get("sentiment") or "unclassified"),
+            para(", ".join(str(x) for x in review.get("aspects", [])) if isinstance(review.get("aspects"), list) else review.get("aspects", "")),
+            para("Pros: " + ("; ".join(str(x) for x in review.get("pros", [])) if isinstance(review.get("pros"), list) else str(review.get("pros") or "")) + "\nCons: " + ("; ".join(str(x) for x in review.get("cons", [])) if isinstance(review.get("cons"), list) else str(review.get("cons") or ""))),
+            para(review.get("review_date") or "—"),
+        ])
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(letter), leftMargin=0.4 * inch, rightMargin=0.4 * inch,
+        topMargin=0.4 * inch, bottomMargin=0.4 * inch, title="Product Reviews",
+    )
+    story = [Paragraph("Product Review Results", title_style)]
+    metadata = f"ASIN: {escape(clean(payload.asin or '—'))} &nbsp; | &nbsp; Reviews in this export: {min(len(payload.reviews), MAX_REVIEWS)}"
+    story.extend([Paragraph(metadata, styles["Normal"]), Spacer(1, 10)])
+    table = LongTable(rows, colWidths=[0.6*inch, 4.0*inch, 0.8*inch, 1.5*inch, 2.5*inch, 0.8*inch], repeatRows=1, hAlign="LEFT")
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#5143a7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9d7e5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f6fb")]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(table)
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def build_analysis_report_pdf(payload: PDFExportRequest) -> bytes:
+    import re
+    from html import escape
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("ReportTitle", parent=styles["Title"], fontSize=20, leading=25, alignment=TA_LEFT, textColor=colors.HexColor("#352a78"))
+    body_style = ParagraphStyle("ReportBody", parent=styles["BodyText"], fontSize=9.5, leading=14, spaceAfter=6)
+    h2_style = ParagraphStyle("ReportH2", parent=styles["Heading2"], fontSize=13, leading=17, spaceBefore=10, spaceAfter=5)
+    h3_style = ParagraphStyle("ReportH3", parent=styles["Heading3"], fontSize=11, leading=14, spaceBefore=8, spaceAfter=4)
+
+    def pdf_markup(value: str) -> str:
+        safe = value.encode("cp1252", "replace").decode("cp1252")
+        safe = escape(safe)
+        safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+        safe = re.sub(r"(?<!\*)\*([^*]+)\*", r"<i>\1</i>", safe)
+        safe = re.sub(r"`([^`]+)`", r"<font name='Courier'>\1</font>", safe)
+        return safe
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=0.7*inch, rightMargin=0.7*inch, topMargin=0.65*inch, bottomMargin=0.65*inch, title="Product Review Analysis")
+    story: list[Any] = [Paragraph("Product Review Analysis", title_style), Spacer(1, 8)]
+    for label, value in (("ASIN", payload.asin), ("Product URL", payload.product_url), ("Reviews collected", payload.review_count_collected), ("Source", payload.source_mode)):
+        if value:
+            story.append(Paragraph(f"<b>{label}:</b> {pdf_markup(str(value))}", body_style))
+    story.append(Spacer(1, 12))
+    for raw_line in (payload.analysis or "No analysis report was provided.").splitlines():
+        line = raw_line.strip()
+        if not line:
+            story.append(Spacer(1, 4))
+        elif line.startswith("### "):
+            story.append(Paragraph(pdf_markup(line[4:]), h3_style))
+        elif line.startswith("## "):
+            story.append(Paragraph(pdf_markup(line[3:]), h2_style))
+        elif line.startswith("# "):
+            story.append(Paragraph(pdf_markup(line[2:]), h2_style))
+        elif line.startswith(("- ", "* ")):
+            story.append(Paragraph("- " + pdf_markup(line[2:]), body_style))
+        else:
+            story.append(Paragraph(pdf_markup(line), body_style))
+    if payload.notice:
+        story.extend([Spacer(1, 12), Paragraph("Limitations", h3_style), Paragraph(pdf_markup(payload.notice), body_style)])
+    doc.build(story)
+    return buffer.getvalue()
+
+
 @app.get("/health")
 def health():
     available_providers = ["amazon_public_html_best_effort"]
@@ -1376,3 +1499,33 @@ def export_xlsx(payload: ExportRequest):
     wb.save(buffer)
     from fastapi.responses import Response
     return Response(content=buffer.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": 'attachment; filename="product-reviews.xlsx"'})
+
+
+@app.post("/api/export/pdf")
+def export_pdf(payload: PDFExportRequest):
+    from pypdf import PdfReader, PdfWriter
+    from fastapi.responses import Response
+
+    payload.reviews = payload.reviews[:MAX_REVIEWS]
+    if payload.mode == "reviews":
+        pdf_bytes = build_review_table_pdf(payload)
+        filename = "product-reviews.pdf"
+    elif payload.mode == "report":
+        pdf_bytes = build_analysis_report_pdf(payload)
+        filename = "product-review-analysis.pdf"
+    else:
+        writer = PdfWriter()
+        for content in (build_analysis_report_pdf(payload), build_review_table_pdf(payload)):
+            reader = PdfReader(io.BytesIO(content))
+            for page in reader.pages:
+                writer.add_page(page)
+        writer.add_metadata({"/Title": "Product Review Analysis and Reviews"})
+        output = io.BytesIO()
+        writer.write(output)
+        pdf_bytes = output.getvalue()
+        filename = "product-review-report-and-reviews.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
