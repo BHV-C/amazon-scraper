@@ -1,0 +1,25 @@
+# Secrets and local environment files
+.env
+.env.*
+.env.example
+.env.local.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# Vercel project metadata
+.vercel/
+
+# Local editor and OS files
+.vscode/
+Thumbs.db
+.DS_Store
