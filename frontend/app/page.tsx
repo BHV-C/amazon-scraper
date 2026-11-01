@@ -3,7 +3,10 @@ import { useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowUp, BarChart3, CheckCircle2, Download, FileSpreadsheet, Filter, Globe, LoaderCircle, Paperclip, Search, Sparkles, Star, X } from "lucide-react";
 
-const API = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://localhost:8000" : "")).replace(/\/$/, "");
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://localhost:8000" : "");
+const API = configuredApiUrl
+  ? `${/^https?:\/\//i.test(configuredApiUrl) ? "" : "https://"}${configuredApiUrl}`.replace(/\/$/, "")
+  : "";
 type Review = {
   review_id: string; review_title: string; review_text: string; rating: number | null;
   review_date: string; variant: string; verified_purchase: boolean | string;
